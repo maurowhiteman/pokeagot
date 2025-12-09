@@ -150,6 +150,14 @@
       "elevation": 0,
       "dest_map": "MAP_LITTLEROOT_TOWN_PROFESSOR_BIRCHS_LAB",
       "dest_warp_id": "0"
+    },
+    {
+      "warp_id": "WARP_3_TO_WESTEROS",
+      "x": 1,
+      "y": 15,
+      "elevation": 0,
+      "dest_map": "MAP_WINTERFELL",
+      "dest_warp_id": "WARP_0_TO_LITTLEROOT"
     }
   ],
   "coord_events": [
