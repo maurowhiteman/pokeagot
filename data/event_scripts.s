@@ -1164,3 +1164,5 @@ EventScript_VsSeekerChargingDone::
 	.include "data/scripts/apricorn_tree.inc"
 
 	.include "data/maps/Winterfell/scripts.inc"
+
+	.include "data/maps/PorytilesTestMap/scripts.inc"
