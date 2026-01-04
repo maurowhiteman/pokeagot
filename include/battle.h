@@ -171,7 +171,8 @@ struct ProtectStruct
     u16 helpingHand:3;
     u16 assuranceDoubled:1;
     u16 myceliumMight:1;
-    u16 padding:11;
+    u16 revengeDoubled:4;
+    u16 padding:7;
     // End of 16-bit bitfield
     u16 physicalDmg;
     u16 specialDmg;
@@ -615,7 +616,7 @@ struct EventStates
     u32 arenaTurn:8;
     enum BattleSide battlerSide:4;
     enum BattlerId moveEndBattler:4;
-    enum FirstTurnEventsStates beforeFristTurn:8;
+    enum FirstTurnEventsStates beforeFirstTurn:8;
     enum FaintedActions faintedAction:8;
     enum BattlerId faintedActionBattler:4;
     enum MoveSuccessOrder atkCanceler:8;
