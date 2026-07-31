@@ -1835,6 +1835,7 @@ static void Cmd_resultmessage(void)
 
     enum StringID stringId = 0;
     u32 *moveResultFlags = &gBattleStruct->moveResultFlags[gBattlerTarget];
+    enum MoveTarget target = GetBattlerMoveTargetType(gBattlerAttacker, gCurrentMove);
 
     if (gBattleControllerExecFlags)
         return;
@@ -1859,7 +1860,7 @@ static void Cmd_resultmessage(void)
                 else
                     stringId = STRINGID_SUPEREFFECTIVE;
             }
-            else if (!gMultiHitCounter)  // Don't print effectiveness on each hit in a multi hit attack
+            else if (!gMultiHitCounter || target == TARGET_SMART)  // Don't print effectiveness on each hit in a multi hit attack
             {
                 stringId = STRINGID_SUPEREFFECTIVE;
             }
@@ -1878,7 +1879,7 @@ static void Cmd_resultmessage(void)
                 else
                     stringId = STRINGID_NOTVERYEFFECTIVE; // Needs a string
             }
-            else if (!gMultiHitCounter)
+            else if (!gMultiHitCounter || target == TARGET_SMART)
             {
                 stringId = STRINGID_NOTVERYEFFECTIVE;
             }
@@ -2533,6 +2534,8 @@ void SetMoveEffect(enum BattlerId battlerAtk, enum BattlerId effectBattler, enum
     case MOVE_EFFECT_RECOIL_HP_25: // Struggle
     {
         s32 recoil = (gBattleMons[effectBattler].maxHP) / 4;
+        if (B_UPDATED_MOVE_DATA >= GEN_5 && (gBattleMons[effectBattler].maxHP % 4) >= 2) // Account for standard rounding (Gen5+)
+            recoil++;
         if (recoil == 0)
             recoil = 1;
         SetPassiveDamageAmount(effectBattler, recoil);
@@ -2624,7 +2627,7 @@ void SetMoveEffect(enum BattlerId battlerAtk, enum BattlerId effectBattler, enum
         break;
     case MOVE_EFFECT_INCINERATE:
         if ((gItemsInfo[gBattleMons[effectBattler].item].pocket == POCKET_BERRIES
-          || (B_INCINERATE_GEMS >= GEN_6 && GetBattlerHoldEffect(effectBattler) == HOLD_EFFECT_GEMS))
+          || (B_INCINERATE_GEMS >= GEN_6 && GetItemHoldEffect(gBattleMons[effectBattler].item) == HOLD_EFFECT_GEMS))
          && abilities[effectBattler] != ABILITY_STICKY_HOLD)
         {
             gLastUsedItem = gBattleMons[effectBattler].item;
@@ -2895,13 +2898,17 @@ void SetMoveEffect(enum BattlerId battlerAtk, enum BattlerId effectBattler, enum
         }
         break;
     case MOVE_EFFECT_EERIE_SPELL:
-        if (gLastMoves[effectBattler] != MOVE_NONE && gLastMoves[effectBattler] != 0xFFFF)
+        if (gLastMoves[effectBattler] != MOVE_NONE && gLastMoves[effectBattler] != MOVE_UNAVAILABLE)
         {
             u32 i;
+            enum Move moveToReduce = gLastMoves[effectBattler];
+
+            if (IsMaxMove(moveToReduce))
+                moveToReduce = gBattleStruct->dynamax.baseMoves[effectBattler];
 
             for (i = 0; i < MAX_MON_MOVES; i++)
             {
-                if (gLastMoves[effectBattler] == gBattleMons[effectBattler].moves[i])
+                if (moveToReduce == gBattleMons[effectBattler].moves[i])
                     break;
             }
 
@@ -2912,7 +2919,7 @@ void SetMoveEffect(enum BattlerId battlerAtk, enum BattlerId effectBattler, enum
                 if (gBattleMons[effectBattler].pp[i] < ppToDeduct)
                     ppToDeduct = gBattleMons[effectBattler].pp[i];
 
-                PREPARE_MOVE_BUFFER(gBattleTextBuff1, gLastMoves[effectBattler])
+                PREPARE_MOVE_BUFFER(gBattleTextBuff1, moveToReduce)
                 ConvertIntToDecimalStringN(gBattleTextBuff2, ppToDeduct, STR_CONV_MODE_LEFT_ALIGN, 1);
                 PREPARE_BYTE_NUMBER_BUFFER(gBattleTextBuff2, 1, ppToDeduct)
                 gBattleMons[effectBattler].pp[i] -= ppToDeduct;
@@ -3843,6 +3850,19 @@ static u32 GetMonHoldEffect(struct Pokemon *mon)
     return holdEffect;
 }
 
+static enum BattlerId GetBattlerFromPlayerPartyId(u32 partyId)
+{
+    if (gBattlerPartyIndexes[B_BATTLER_0] == partyId && !(gAbsentBattlerFlags & 1))
+        return B_BATTLER_0;
+    if (!IsDoubleBattle())
+        return MAX_BATTLERS_COUNT;
+    if (!BattlerIsPlayer(B_BATTLER_2))
+        return MAX_BATTLERS_COUNT;
+    if (gBattlerPartyIndexes[B_BATTLER_2] == partyId && !(gAbsentBattlerFlags & 4))
+        return B_BATTLER_2;
+    return MAX_BATTLERS_COUNT;
+}
+
 static void Cmd_getexp(void)
 {
     CMD_ARGS(u8 battler);
@@ -3853,6 +3873,14 @@ static void Cmd_getexp(void)
     u32 currLvl;
 
     gBattlerFainted = GetBattlerForBattleScript(cmd->battler);
+
+    enum Species faintedSpecies;
+    if (!gBattleMons[gBattlerFainted].volatiles.transformed)
+        faintedSpecies = gBattleMons[gBattlerFainted].species;
+    else if (GetConfig(B_TRANSFORM_BATTLE_REWARDS) == GEN_3 || GetConfig(B_TRANSFORM_BATTLE_REWARDS) == GEN_4)
+        faintedSpecies = gBattleMons[gBattlerFainted].species;
+    else
+        faintedSpecies = gBattleMons[gBattlerFainted].volatiles.transformedMonSpecies;
 
     switch (gBattleScripting.getexpState)
     {
@@ -3866,7 +3894,7 @@ static void Cmd_getexp(void)
         else
         {
             gBattleScripting.getexpState++;
-            gBattleStruct->givenExpMons |= (1u << gBattlerPartyIndexes[gBattlerFainted]);
+            gBattleStruct->givenExpMons[GetBattlerTrainer(gBattlerFainted) & BIT_FLANK] |= (1u << gBattlerPartyIndexes[gBattlerFainted]);
         }
         break;
     case 1: // calculate experience points to redistribute
@@ -3907,16 +3935,16 @@ static void Cmd_getexp(void)
             if (orderId < PARTY_SIZE)
                 gBattleStruct->expGettersOrder[orderId] = PARTY_SIZE;
 
-            calculatedExp = gSpeciesInfo[gBattleMons[gBattlerFainted].species].expYield * gBattleMons[gBattlerFainted].level;
-            if (B_SCALED_EXP >= GEN_5 && B_SCALED_EXP != GEN_6)
+            calculatedExp = gSpeciesInfo[faintedSpecies].expYield * gBattleMons[gBattlerFainted].level;
+            if (GetConfig(B_SCALED_EXP) >= GEN_5 && GetConfig(B_SCALED_EXP) != GEN_6)
                 calculatedExp /= 5;
             else
                 calculatedExp /= 7;
 
-            if (B_TRAINER_EXP_MULTIPLIER <= GEN_7 && gBattleTypeFlags & BATTLE_TYPE_TRAINER)
+            if (GetConfig(B_TRAINER_EXP_MULTIPLIER) <= GEN_7 && gBattleTypeFlags & BATTLE_TYPE_TRAINER)
                 calculatedExp = (calculatedExp * 150) / 100;
 
-            if (B_SPLIT_EXP < GEN_6)
+            if (GetConfig(B_SPLIT_EXP) < GEN_6)
             {
                 if (viaExpShare) // at least one mon is getting exp via exp share
                 {
@@ -3962,13 +3990,12 @@ static void Cmd_getexp(void)
                 gBattleScripting.getexpState = 5;
                 gBattleStruct->battlerExpReward = 0;
             }
-            else if ((gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER && *expMonId >= 3)
-                  || GetMonData(&gParties[B_TRAINER_PLAYER][*expMonId], MON_DATA_LEVEL) == MAX_LEVEL)
+            else if (GetMonData(&gParties[B_TRAINER_PLAYER][*expMonId], MON_DATA_LEVEL) == MAX_LEVEL)
             {
                 gBattleScripting.getexpState = 5;
                 gBattleStruct->battlerExpReward = 0;
                 if (B_MAX_LEVEL_EV_GAINS >= GEN_5)
-                    MonGainEVs(&gParties[B_TRAINER_PLAYER][*expMonId], gBattleMons[gBattlerFainted].species);
+                    MonGainEVs(&gParties[B_TRAINER_PLAYER][*expMonId], faintedSpecies);
             }
             else
             {
@@ -4013,49 +4040,30 @@ static void Cmd_getexp(void)
 
                     if (IsTradedMon(&gParties[B_TRAINER_PLAYER][*expMonId]))
                     {
-                        // check if the Pokémon doesn't belong to the player
-                        if (gBattleTypeFlags & BATTLE_TYPE_INGAME_PARTNER && *expMonId >= 3)
-                            i = STRINGID_EMPTYSTRING4;
-                        else
-                            i = STRINGID_ABOOSTED;
+                        i = STRINGID_ABOOSTED;
                     }
                     else
                     {
                         i = STRINGID_EMPTYSTRING4;
                     }
 
-                    // get exp getter battler
-                    if (IsDoubleBattle())
-                    {
-                        if (gBattlerPartyIndexes[2] == *expMonId && !(gAbsentBattlerFlags & 4))
-                            gBattleStruct->expGetterBattlerId = 2;
-                        else if (!(gAbsentBattlerFlags & 1))
-                            gBattleStruct->expGetterBattlerId = 0;
-                        else
-                            gBattleStruct->expGetterBattlerId = 2;
-                    }
-                    else
-                    {
-                        gBattleStruct->expGetterBattlerId = 0;
-                    }
-
-                    PREPARE_MON_NICK_WITH_PREFIX_BUFFER(gBattleTextBuff1, gBattleStruct->expGetterBattlerId, *expMonId);
+                    PREPARE_MON_NICK_WITH_PREFIX_BUFFER(gBattleTextBuff1, 0, *expMonId);
                     // buffer 'gained' or 'gained a boosted'
                     PREPARE_STRING_BUFFER(gBattleTextBuff2, i);
                     PREPARE_WORD_NUMBER_BUFFER(gBattleTextBuff3, 6, gBattleStruct->battlerExpReward);
 
                     if (wasSentOut || holdEffect == HOLD_EFFECT_EXP_SHARE)
                     {
-                        PrepareStringBattle(STRINGID_PKMNGAINEDEXP, gBattleStruct->expGetterBattlerId);
+                        PrepareStringBattle(STRINGID_PKMNGAINEDEXP, 0);
                     }
                     else if (IsGen6ExpShareEnabled() && !gBattleStruct->teamGotExpMsgPrinted) // Print 'the rest of your team got exp' message once, when all of the sent-in mons were given experience
                     {
                         gLastUsedItem = ITEM_EXP_SHARE;
-                        PrepareStringBattle(STRINGID_TEAMGAINEDEXP, gBattleStruct->expGetterBattlerId);
+                        PrepareStringBattle(STRINGID_TEAMGAINEDEXP, 0);
                         gBattleStruct->teamGotExpMsgPrinted = TRUE;
                     }
 
-                    MonGainEVs(&gParties[B_TRAINER_PLAYER][*expMonId], gBattleMons[gBattlerFainted].species);
+                    MonGainEVs(&gParties[B_TRAINER_PLAYER][*expMonId], faintedSpecies);
                 }
                 gBattleScripting.getexpState++;
             }
@@ -4064,7 +4072,7 @@ static void Cmd_getexp(void)
     case 3: // Set stats and give exp
         if (gBattleControllerExecFlags == 0)
         {
-            gBattleResources->bufferB[gBattleStruct->expGetterBattlerId][0] = 0;
+            gBattleResources->bufferB[0][0] = 0;
             currLvl = GetMonData(&gParties[B_TRAINER_PLAYER][*expMonId], MON_DATA_LEVEL);
             if (GetMonData(&gParties[B_TRAINER_PLAYER][*expMonId], MON_DATA_HP) && currLvl != MAX_LEVEL)
             {
@@ -4077,8 +4085,8 @@ static void Cmd_getexp(void)
                 gBattleResources->beforeLvlUp->level             = currLvl;
                 gBattleResources->beforeLvlUp->learnMultipleMoves = FALSE;
 
-                BtlController_EmitExpUpdate(gBattleStruct->expGetterBattlerId, B_COMM_TO_CONTROLLER, *expMonId, gBattleStruct->battlerExpReward);
-                MarkBattlerForControllerExec(gBattleStruct->expGetterBattlerId);
+                BtlController_EmitExpUpdate(0, B_COMM_TO_CONTROLLER, *expMonId, gBattleStruct->battlerExpReward);
+                MarkBattlerForControllerExec(0);
             }
             gBattleScripting.getexpState++;
         }
@@ -4086,28 +4094,23 @@ static void Cmd_getexp(void)
     case 4: // lvl up if necessary
         if (gBattleControllerExecFlags == 0)
         {
-            u32 expBattler = gBattleStruct->expGetterBattlerId;
-            if (gBattleResources->bufferB[expBattler][0] == CONTROLLER_TWORETURNVALUES && gBattleResources->bufferB[expBattler][1] == RET_VALUE_LEVELED_UP)
+            if (gBattleResources->bufferB[0][0] == CONTROLLER_TWORETURNVALUES && gBattleResources->bufferB[0][1] == RET_VALUE_LEVELED_UP)
             {
-                u16 temp, battler = 0xFF;
-                if (gBattleTypeFlags & BATTLE_TYPE_TRAINER && gBattlerPartyIndexes[expBattler] == *expMonId)
-                    HandleLowHpMusicChange(GetBattlerMon(expBattler), expBattler);
+                u16 temp = 0xFF;
+                enum BattlerId battler = GetBattlerFromPlayerPartyId(*expMonId);
+                if (gBattleTypeFlags & BATTLE_TYPE_TRAINER && battler != MAX_BATTLERS_COUNT)
+                    HandleLowHpMusicChange(GetBattlerMon(battler), battler);
 
-                PREPARE_MON_NICK_WITH_PREFIX_BUFFER(gBattleTextBuff1, expBattler, *expMonId);
+                PREPARE_MON_NICK_WITH_PREFIX_BUFFER(gBattleTextBuff1, 0, *expMonId);
                 PREPARE_BYTE_NUMBER_BUFFER(gBattleTextBuff2, 3, GetMonData(&gParties[B_TRAINER_PLAYER][*expMonId], MON_DATA_LEVEL));
 
                 gLeveledUpInBattle |= 1 << *expMonId;
                 BattleScriptCall(BattleScript_LevelUp);
-                gBattleStruct->battlerExpReward = T1_READ_32(&gBattleResources->bufferB[expBattler][2]);
+                gBattleStruct->battlerExpReward = T1_READ_32(&gBattleResources->bufferB[0][2]);
                 AdjustFriendship(&gParties[B_TRAINER_PLAYER][*expMonId], FRIENDSHIP_EVENT_GROW_LEVEL);
 
                 // update battle mon structure after level up
-                if (gBattlerPartyIndexes[0] == *expMonId && gBattleMons[0].hp)
-                    battler = 0;
-                else if (gBattlerPartyIndexes[2] == *expMonId && gBattleMons[2].hp && (IsDoubleBattle()))
-                    battler = 2;
-
-                if (battler != 0xFF)
+                if (battler != MAX_BATTLERS_COUNT)
                 {
                     if (gBattleMons[battler].volatiles.transformed)
                     {
@@ -5651,7 +5654,7 @@ static void Cmd_yesnoboxlearnmove(void)
                 gBattleScripting.learnMoveState = 5;
             }
         }
-        else if (JOY_NEW(B_BUTTON))
+        else if (JOY_NEW(B_BUTTON) || TESTING)
         {
             PlaySE(SE_SELECT);
             gBattleScripting.learnMoveState = 5;
@@ -6190,6 +6193,7 @@ static void Cmd_removeitem(void)
 
     enum BattlerId battler = GetBattlerForBattleScript(cmd->battler);
     enum Item itemId = gBattleMons[battler].item;
+    bool32 scriptQueued;
 
     if (gBattleStruct->flungItem == FLUNG_ITEM_REMOVE)
     {
@@ -6221,7 +6225,10 @@ static void Cmd_removeitem(void)
     MarkBattlerForControllerExec(battler);
 
     ClearBattlerItemEffectHistory(battler);
-    if (!TryCheekPouch(battler, itemId, cmd->nextInstr) && !TrySymbiosis(battler, itemId, FALSE))
+    scriptQueued = TrySymbiosis(battler, itemId, cmd->nextInstr);
+    if (TryCheekPouch(battler, itemId, scriptQueued ? gBattlescriptCurrInstr : cmd->nextInstr))
+        scriptQueued = TRUE;
+    if (!scriptQueued)
         gBattlescriptCurrInstr = cmd->nextInstr;
 }
 
@@ -6291,7 +6298,7 @@ static void Cmd_drawlvlupbox(void)
         }
         break;
     case 6:
-        if (gMain.newKeys != 0 || RECORDED_WILD_BATTLE)
+        if (gMain.newKeys != 0 || RECORDED_WILD_BATTLE || TESTING)
         {
             // Draw page 2 of level up box
             PlaySE(SE_SELECT);
@@ -6301,7 +6308,7 @@ static void Cmd_drawlvlupbox(void)
         }
         break;
     case 8:
-        if (gMain.newKeys != 0 || RECORDED_WILD_BATTLE)
+        if (gMain.newKeys != 0 || RECORDED_WILD_BATTLE || TESTING)
         {
             // Close level up box
             PlaySE(SE_SELECT);
@@ -6907,6 +6914,7 @@ void BS_CourtChangeSwapSideStatuses(void)
         gBattleStruct->hazardsQueue[B_SIDE_PLAYER][i] = gBattleStruct->hazardsQueue[B_SIDE_OPPONENT][i];
     for (u32 i = 0; i < HAZARDS_MAX_COUNT; i++)
         gBattleStruct->hazardsQueue[B_SIDE_OPPONENT][i] = tempQueue[i];
+    SWAP(gBattleStruct->numHazards[B_SIDE_PLAYER], gBattleStruct->numHazards[B_SIDE_OPPONENT], temp);
     SWAP(sideTimerPlayer->spikesAmount, sideTimerOpp->spikesAmount, temp);
     SWAP(sideTimerPlayer->toxicSpikesAmount, sideTimerOpp->toxicSpikesAmount, temp);
 
@@ -8120,19 +8128,19 @@ static void Cmd_copymovepermanently(void)
         }
         else // sketch worked
         {
-            struct MovePpInfo movePpData;
+            struct MovePPInfo movePPData;
 
             gBattleMons[gBattlerAttacker].moves[gCurrMovePos] = gLastPrintedMoves[gBattlerTarget];
             gBattleMons[gBattlerAttacker].pp[gCurrMovePos] = GetMovePP(gLastPrintedMoves[gBattlerTarget]);
 
             for (i = 0; i < MAX_MON_MOVES; i++)
             {
-                movePpData.moves[i] = gBattleMons[gBattlerAttacker].moves[i];
-                movePpData.pp[i] = gBattleMons[gBattlerAttacker].pp[i];
+                movePPData.moves[i] = gBattleMons[gBattlerAttacker].moves[i];
+                movePPData.pp[i] = gBattleMons[gBattlerAttacker].pp[i];
             }
-            movePpData.ppBonuses = gBattleMons[gBattlerAttacker].ppBonuses;
+            movePPData.ppBonuses = gBattleMons[gBattlerAttacker].ppBonuses;
 
-            BtlController_EmitSetMonData(gBattlerAttacker, B_COMM_TO_CONTROLLER, REQUEST_MOVES_PP_BATTLE, 0, sizeof(movePpData), &movePpData);
+            BtlController_EmitSetMonData(gBattlerAttacker, B_COMM_TO_CONTROLLER, REQUEST_MOVES_PP_BATTLE, 0, sizeof(movePPData), &movePPData);
             MarkBattlerForControllerExec(gBattlerAttacker);
 
             PREPARE_MOVE_BUFFER(gBattleTextBuff1, gLastPrintedMoves[gBattlerTarget])
@@ -9335,7 +9343,7 @@ static void Cmd_switchoutabilities(void)
 
         gBattleMons[battler].status1 = 0;
         BtlController_EmitSetMonData(battler, B_COMM_TO_CONTROLLER, REQUEST_STATUS_BATTLE,
-                                        1u << gBattleStruct->battlerPartyIndexes[battler],
+                                        1u << gBattlerPartyIndexes[battler],
                                         sizeof(gBattleMons[battler].status1),
                                         &gBattleMons[battler].status1);
         MarkBattlerForControllerExec(battler);
@@ -9347,7 +9355,7 @@ static void Cmd_switchoutabilities(void)
         if (regenerate > gBattleMons[battler].maxHP)
             regenerate = gBattleMons[battler].maxHP;
         BtlController_EmitSetMonData(battler, B_COMM_TO_CONTROLLER, REQUEST_HP_BATTLE,
-                                        1u << gBattleStruct->battlerPartyIndexes[battler],
+                                        1u << gBattlerPartyIndexes[battler],
                                         sizeof(regenerate),
                                         &regenerate);
         MarkBattlerForControllerExec(battler);
@@ -9900,6 +9908,18 @@ static const u8 sBadgeLevel[] = {
     100,
 };
 
+static u32 GetBattleMonCatchRate(struct BattlePokemon *battleMon)
+{
+    enum Species species;
+    if (!battleMon->volatiles.transformed)
+        species = battleMon->species;
+    else if (GetConfig(B_TRANSFORM_CATCH_RATE) == GEN_3 || GetConfig(B_TRANSFORM_CATCH_RATE) == GEN_4)
+        species = battleMon->species;
+    else
+        species = battleMon->volatiles.transformedMonSpecies;
+    return gSpeciesInfo[species].catchRate;
+}
+
 static u32 ComputeCaptureOdds(u32 wildMonBattler, u32 playerBattler)
 {
     struct BallData ball;
@@ -9914,7 +9934,7 @@ static u32 ComputeCaptureOdds(u32 wildMonBattler, u32 playerBattler)
     if (gBattleTypeFlags & BATTLE_TYPE_SAFARI)
         catchRate = gBattleStruct->safariCatchFactor * 1275 / 100;
     else
-        catchRate = gSpeciesInfo[battleMon->species].catchRate;
+        catchRate = GetBattleMonCatchRate(battleMon);
 
     catchRate += ball.flatBonus;
     if (catchRate <= 0)
@@ -10756,6 +10776,8 @@ static void SetStatChangeFlags(struct StatChange *st, u32 flags)
     st->ignoreMirrorArmored = SET_FLAG(STAT_CHANGE_IGNORE_MIRROR_ARMOR);
     st->itemMessage = SET_FLAG(STAT_CHANGE_ITEM);
     st->stickyWeb = SET_FLAG(STAT_CHANGE_STICKY_WEB);
+    st->mirrorHerbActivation = SET_FLAG(STAT_CHANGE_MIRROR_HERB);
+    st->opportunistActivation = SET_FLAG(STAT_CHANGE_OPPORTUNIST);
 }
 #undef SET_FLAG
 
@@ -11027,9 +11049,9 @@ bool32 CanMoveThawTarget(enum Ability abilityAtk, enum Move move)
     return GetConfig(B_HIT_THAW) >= GEN_6 && !IsSheerForceAffected(move, abilityAtk) && MoveThawsUser(move);
 }
 
-bool32 CanFireMoveThawTarget(enum Move move)
+bool32 CanFireMoveThawTarget(enum Move move, enum Type moveType)
 {
-    return GetConfig(B_HIT_THAW) >= GEN_3 && GetMoveType(move) == TYPE_FIRE && GetMovePower(move) != 0;
+    return GetConfig(B_HIT_THAW) >= GEN_3 && moveType == TYPE_FIRE && GetMovePower(move) != 0;
 }
 
 void BS_CheckParentalBondCounter(void)
@@ -11167,14 +11189,13 @@ void ApplyExperienceMultipliers(s32 *expAmount, u8 expGetterMonId, u8 faintedBat
         *expAmount = (*expAmount * 150) / 100;
     if (holdEffect == HOLD_EFFECT_LUCKY_EGG)
         *expAmount = (*expAmount * 150) / 100;
-    if (B_UNEVOLVED_EXP_MULTIPLIER >= GEN_6 && IsMonPastEvolutionLevel(&gParties[B_TRAINER_PLAYER][expGetterMonId]))
+    if (GetConfig(B_UNEVOLVED_EXP_MULTIPLIER) >= GEN_6 && IsMonPastEvolutionLevel(&gParties[B_TRAINER_PLAYER][expGetterMonId]))
         *expAmount = (*expAmount * 4915) / 4096;
-    if (B_AFFECTION_MECHANICS == TRUE && GetMonAffectionHearts(&gParties[B_TRAINER_PLAYER][expGetterMonId]) >= AFFECTION_FOUR_HEARTS)
+    if (GetConfig(B_AFFECTION_MECHANICS) == TRUE && GetMonAffectionHearts(&gParties[B_TRAINER_PLAYER][expGetterMonId]) >= AFFECTION_FOUR_HEARTS)
         *expAmount = (*expAmount * 4915) / 4096;
     if (CheckBagHasItem(ITEM_EXP_CHARM, 1)) //is also for other exp boosting Powers if/when implemented
         *expAmount = (*expAmount * 150) / 100;
-
-    if (B_SCALED_EXP >= GEN_5 && B_SCALED_EXP != GEN_6)
+    if (GetConfig(B_SCALED_EXP) >= GEN_5 && GetConfig(B_SCALED_EXP) != GEN_6)
     {
         // Note: There is an edge case where if a Pokémon receives a large amount of exp, it wouldn't be properly calculated
         //       because of multiplying by scaling factor(the value would simply be larger than an u32 can hold). Hence u64 is needed.
@@ -11318,7 +11339,7 @@ void BS_ItemIncreaseStat(void)
 
     if (GetItemBattleUsage(gLastUsedItem) == EFFECT_ITEM_INCREASE_STAT)
     {
-        if (B_X_ITEMS_BUFF >= GEN_7)
+        if (GetConfig(B_X_ITEMS_BUFF) >= GEN_7)
             SetStatChange(gBattlerAttacker, GetItemEffect(gLastUsedItem)[1], 2);
         else
             SetStatChange(gBattlerAttacker, GetItemEffect(gLastUsedItem)[1], 1);
@@ -11722,8 +11743,12 @@ void BS_AllySwitchSwapBattler(void)
 void BS_TryAllySwitch(void)
 {
     NATIVE_ARGS(const u8 *failInstr);
+    enum BattlerId partner = BATTLE_PARTNER(gBattlerAttacker);
 
-    if (!IsBattlerAlive(BATTLE_PARTNER(gBattlerAttacker)) || HasPartnerTrainer(gBattlerAttacker))
+    if (!IsBattlerAlive(partner)
+     || HasPartnerTrainer(gBattlerAttacker)
+     || gBattleStruct->battlerState[gBattlerAttacker].commanderSpecies != SPECIES_NONE
+     || gBattleStruct->battlerState[partner].commanderSpecies != SPECIES_NONE)
     {
         gBattlescriptCurrInstr = cmd->failInstr;
     }
@@ -11983,11 +12008,12 @@ void BS_TryRevivalBlessing(void)
 
 void BS_JumpIfCommanderActive(void)
 {
-    NATIVE_ARGS(const u8 *jumpInstr);
+    NATIVE_ARGS(u8 battler, const u8 *jumpInstr);
+    enum BattlerId battler = GetBattlerForBattleScript(cmd->battler);
 
-    if (gBattleStruct->battlerState[gBattlerTarget].commanderSpecies != SPECIES_NONE)
+    if (gBattleStruct->battlerState[battler].commanderSpecies != SPECIES_NONE)
         gBattlescriptCurrInstr = cmd->jumpInstr;
-    else if (gBattleMons[gBattlerTarget].volatiles.semiInvulnerable == STATE_COMMANDER)
+    else if (gBattleMons[battler].volatiles.semiInvulnerable == STATE_COMMANDER)
         gBattlescriptCurrInstr = cmd->jumpInstr;
     else
         gBattlescriptCurrInstr = cmd->nextInstr;
@@ -13208,29 +13234,43 @@ void BS_JumpIfTargetAlly(void)
 void BS_TryPsychoShift(void)
 {
     NATIVE_ARGS(const u8 *failInstr, const u8 *sleepClauseFailInstr);
+    enum Ability attackerAbility = GetBattlerAbility(gBattlerAttacker);
     enum Ability targetAbility = GetBattlerAbility(gBattlerTarget);
+    enum MoveEffect synchronizeEffect = MOVE_EFFECT_NONE;
+
     // Psycho shift works
-    if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_POISON) && CanBePoisoned(gBattlerAttacker, gBattlerTarget, GetBattlerAbility(gBattlerAttacker), targetAbility))
+    if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_POISON)
+     && CanSetNonVolatileStatus(gBattlerAttacker, gBattlerTarget, attackerAbility, targetAbility, MOVE_EFFECT_TOXIC, CHECK_TRIGGER))
     {
         gBattleCommunication[MULTISTRING_CHOOSER] = 0;
+        synchronizeEffect = MOVE_EFFECT_POISON;
     }
-    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_TOXIC_POISON) && CanBePoisoned(gBattlerAttacker, gBattlerTarget, GetBattlerAbility(gBattlerAttacker), targetAbility))
+    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_TOXIC_POISON)
+          && CanSetNonVolatileStatus(gBattlerAttacker, gBattlerTarget, attackerAbility, targetAbility, MOVE_EFFECT_TOXIC, CHECK_TRIGGER))
     {
         gBattleCommunication[MULTISTRING_CHOOSER] = 1;
+        synchronizeEffect = MOVE_EFFECT_TOXIC;
     }
-    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_BURN) && CanBeBurned(gBattlerAttacker, gBattlerTarget, targetAbility))
+    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_BURN)
+          && CanSetNonVolatileStatus(gBattlerAttacker, gBattlerTarget, attackerAbility, targetAbility, MOVE_EFFECT_BURN, CHECK_TRIGGER))
     {
         gBattleCommunication[MULTISTRING_CHOOSER] = 2;
+        synchronizeEffect = MOVE_EFFECT_BURN;
     }
-    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_PARALYSIS) && CanBeParalyzed(gBattlerAttacker, gBattlerTarget, targetAbility))
+    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_PARALYSIS)
+          && CanSetNonVolatileStatus(gBattlerAttacker, gBattlerTarget, attackerAbility, targetAbility, MOVE_EFFECT_PARALYSIS, CHECK_TRIGGER))
     {
         gBattleCommunication[MULTISTRING_CHOOSER] = 3;
+        synchronizeEffect = MOVE_EFFECT_PARALYSIS;
     }
-    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_SLEEP) && CanBeSlept(gBattlerAttacker, gBattlerTarget, targetAbility, BLOCKED_BY_SLEEP_CLAUSE))
+    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_SLEEP)
+          && !IsSleepClauseActiveForSide(GetBattlerSide(gBattlerTarget))
+          && CanSetNonVolatileStatus(gBattlerAttacker, gBattlerTarget, attackerAbility, targetAbility, MOVE_EFFECT_SLEEP, CHECK_TRIGGER))
     {
         gBattleCommunication[MULTISTRING_CHOOSER] = 4;
     }
-    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_FROSTBITE) && CanBeFrozen(gBattlerAttacker, gBattlerTarget, targetAbility))
+    else if ((gBattleMons[gBattlerAttacker].status1 & STATUS1_FROSTBITE)
+          && CanSetNonVolatileStatus(gBattlerAttacker, gBattlerTarget, attackerAbility, targetAbility, MOVE_EFFECT_FREEZE_OR_FROSTBITE, CHECK_TRIGGER))
     {
         gBattleCommunication[MULTISTRING_CHOOSER] = 5;
     }
@@ -13254,6 +13294,7 @@ void BS_TryPsychoShift(void)
         &gBattleMons[gBattlerTarget].status1);
     MarkBattlerForControllerExec(gBattlerTarget);
     TryActivateSleepClause(gBattlerTarget, gBattlerPartyIndexes[gBattlerTarget]);
+    TrySynchronizeActivation(gBattlerAttacker, gBattlerTarget, synchronizeEffect);
     gBattlescriptCurrInstr = cmd->nextInstr;
 }
 
