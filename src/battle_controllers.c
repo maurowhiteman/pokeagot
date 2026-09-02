@@ -1103,7 +1103,7 @@ void BtlController_EmitChooseItem(enum BattlerId battler, u32 bufferId, u8 *batt
     PrepareBufferDataTransfer(battler, bufferId, gBattleResources->transferBuffer, 4);
 }
 
-void BtlController_EmitChoosePokemon(enum BattlerId battler, u32 bufferId, u8 caseId, u8 slotId, u16 abilityId, enum BattlerId battlerPreventingSwitchout, u8 *data)
+void BtlController_EmitChoosePokemon(enum BattlerId battler, u32 bufferId, u8 caseId, u8 slotId, enum Ability abilityId, enum BattlerId battlerPreventingSwitchout, u8 *data)
 {
     s32 i;
 
@@ -2840,7 +2840,7 @@ bool32 TwoOpponentIntroMons(enum BattlerId battler) // Double battle with both o
 {
     return (IsDoubleBattle()
             && IsValidForBattle(GetBattlerMon(battler))
-            && IsValidForBattle(GetBattlerMon(BATTLE_PARTNER(battler))));
+            && IsValidForBattle(GetBattlerMon(GetPartnerBattler(battler))));
 }
 
 // Task data for Task_StartSendOutAnim
@@ -3054,8 +3054,8 @@ static void AnimateMonAfterKnockout(enum BattlerId battler)
     if (B_ANIMATE_MON_AFTER_KO == FALSE)
         return;
 
-    enum BattlerId oppositeBattler = BATTLE_OPPOSITE(battler);
-    enum BattlerId partnerBattler = BATTLE_PARTNER(oppositeBattler);
+    enum BattlerId oppositeBattler = GetOppositeBattler(battler);
+    enum BattlerId partnerBattler = GetPartnerBattler(oppositeBattler);
     bool32 wasPlayerSideKnockedOut = (IsOnPlayerSide(battler));
 
     if (IsBattlerAlive(oppositeBattler))
@@ -3264,7 +3264,7 @@ void UpdateFriendshipFromXItem(enum BattlerId battler)
     gBattleResources->bufferA[battler][1] = REQUEST_FRIENDSHIP_BATTLE;
     GetBattlerMonData(battler, party, gBattlerPartyIndexes[battler], &friendship);
 
-    u16 heldItem;
+    enum Item heldItem;
     gBattleResources->bufferA[battler][1] = REQUEST_HELDITEM_BATTLE;
     GetBattlerMonData(battler, party, gBattlerPartyIndexes[battler], (u8*)&heldItem);
 
@@ -3348,22 +3348,22 @@ bool32 TrainerHasParty(enum BattleTrainer trainer)
 }
 
 // Used for partner and opponent
-void SetFinalChosenTarget(enum BattlerId battler, bool32 partner)
+void SetFinalChosenTarget(enum BattlerId battler, bool32 checkPartner)
 {
     struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleResources->bufferA[battler][4]);
 
     enum BattlerId chosenTarget = gAiBattleData->chosenTarget[battler];
     u32 chosenMoveIndex = gAiBattleData->chosenMoveIndex[battler];
     u32 chosenMove = moveInfo->moves[chosenMoveIndex];
-    enum MoveTarget targetType = GetBattlerMoveTargetType(battler, chosenMove);
+    enum MoveTarget targetType = GetBattlerMoveSelectionTargetType(battler, chosenMove);
 
     switch (targetType)
     {
     case TARGET_ALLY:
-        chosenTarget = BATTLE_PARTNER(battler);
+        chosenTarget = GetPartnerBattler(battler);
         break;
     case TARGET_USER_OR_ALLY: // AI could have chosen opponent as the target because of the way the score system works
-        if (!IsBattlerAlly(battler, chosenTarget))
+        if (!IsBattlerAlly(battler, chosenTarget) || !IsBattlerAlive(GetPartnerBattler(battler)))
             chosenTarget = battler;
         break;
     case TARGET_USER:
@@ -3372,7 +3372,7 @@ void SetFinalChosenTarget(enum BattlerId battler, bool32 partner)
         chosenTarget = battler;
         break;
     case TARGET_BOTH:
-        if (partner)
+        if (checkPartner)
         {
             chosenTarget = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
             if (!IsBattlerAlive(chosenTarget))
